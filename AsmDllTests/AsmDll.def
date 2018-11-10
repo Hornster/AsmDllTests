@@ -1,0 +1,6 @@
+LIBRARY AsmDllTests
+EXPORTS 
+		EncryptMsg
+		;For Debug Only:
+		CalcNeededLength
+		foo
