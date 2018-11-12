@@ -43,11 +43,6 @@ foo ENDP
 ;*Output is the desired length of the message (int, DWORD) in EAX.
 ;***************************************************************
 CalcNeededLength PROC msgLength:DWORD, keyLength:DWORD
-	
-	POP ECX												;Store return address
-	POP msgLength										;Get the messageLength value from the stack and store it in msgLength
-	POP keyLength										;Get the keyLength value from the stack and store it in keyLength
-	PUSH ECX											;Put the return address back on the stack
 
 	MOV EAX, msgLength									;Prepare the current message length for division.
 	MOV EBX, keyLength									;Prepare the ky length for division.
@@ -87,14 +82,13 @@ CalcNeededLength ENDP
 ;*****
 ;*Note that the passed characters are in UTF-16
 ;*****************************************************************
-LengthenString PROC sourceMsg:DWORD, sourceLength:DWORD, desiredLength:DWORD
-	returnPtr DWORD ?									;Placeholder for return address.
-	resultMsg DWORD ?									;Variable for storing the return address.
+LengthenString PROC sourceMsg:PTR DWORD, sourceLength:DWORD, desiredLength:DWORD
 
+	LOCAL returnPtr : DWORD								;Placeholder for return address.				;;;;;;Lokalne sa wrzucane na stos. Popnij je na koncu procedury. (Pop adresu jest niepotrzebny na razie tu¿ poni¿ej, dopiero na koñcu)
+	LOCAL resultMsg : DWORD								;Variable for storing the return address.
+	
 	POP returnPtr										;Store the return address
-	POP sourceMsg										;Retreive first arg - the ptr to the source array of 16 bit chars (UTF-16)
-	POP sourceLength									;Retrieve from the stack the length of the source array
-	POP desiredLength									;Retrieve the thrird arg - desired length
+
 
 	INVOKE GetProcessHeap								;Retrieve the address of the heap for the process. Address returned in EAX.
 	MOV EBX, desiredLength								;Allocation of memory is made in bytes. We need words...

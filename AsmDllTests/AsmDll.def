@@ -3,4 +3,5 @@ EXPORTS
 		EncryptMsg
 		;For Debug Only:
 		CalcNeededLength
+		LengthenString
 		foo
