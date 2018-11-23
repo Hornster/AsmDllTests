@@ -12,8 +12,8 @@ ExampleConst DWORD 145d						;edxamplary constant used in the procedure foo. val
 
 heapAllocFlags DWORD HEAP_ZERO_MEMORY
 
-XCharacter WORD 0058h						;UTF-16 encoding of the X character (two bytes).
-GCharacter WORD 0047h						;UTF-16 encoding of the G character (two bytes).
+XCharacter WORD 0058h						;UTF-16 encoding of the X character (two bytes, the processor will save in little endian format).
+GCharacter WORD 0047h						;UTF-16 encoding of the G character (two bytes, the processor will save in little endian format).
 
 .DATA										;Data segment, with variables
 
@@ -35,6 +35,29 @@ foo PROC
 	RET
 foo ENDP
 
+;*****************************************************************
+;*Checks if passed amount of bytes is dividable by DWORD (by 4). If yes - returns 0h, otherwise returns non-zero value.
+;*Uses EAX, EBX, EDX
+;*Preserves EBX, EDX
+;*Result returned in EAX
+;******************************************************************
+IsDividableByDWORD PROC bytesAmount:DWORD
+	PUSH EBX										;Store values of registers used by the IsDividableByDWORD procedure.
+	PUSH EDX										;^^
+
+	XOR EDX, EDX										;Division by 32 bit number - 64 bit divident is stored in EDX (higher 32 bits) and EAX (lower 32 bits). Since the value won't exceed 32 bits - set the EDX to 0x0h
+	MOV EAX, bytesAmount								;Prepare the amount of bytes to test.
+	MOV EBX, 4h											;The amount of bytes will be divided by 4 - amount of bytes that make the DWORD.
+
+	DIV EBX												;Perform division. If the amount of bytes fills perfectly in DWORDs - value in EDX will be 0h. Non-zero otherwise.
+
+	MOV EAX, EDX									;Store the result.
+	POP EDX											;Restore values of registers used by the IsDividableByDWORD procedure.
+	POP EBX											;^^
+
+	RET													;Return
+IsDividableByDWORD ENDP
+
 ;***************************************************************
 ;*Calculates needed length for the encrypted message.
 ;**Input:
@@ -45,7 +68,7 @@ foo ENDP
 CalcNeededLength PROC msgLength:DWORD, keyLength:DWORD
 
 	MOV EAX, msgLength									;Prepare the current message length for division.
-	MOV EBX, keyLength									;Prepare the ky length for division.
+	MOV EBX, keyLength									;Prepare the key length for division.
 
 	XOR EDX, EDX										;Division by 32 bit number - 64 bit divident is stored in EDX (higher 32 bits) and EAX (lower 32 bits). Since the value won't exceed 32 bits - set the EDX to 0x0h
 	DIV EBX												;Divide the msgLength by keyLength - remainder of the division is needed and will be found in EDX.
@@ -78,21 +101,28 @@ CalcNeededLength ENDP
 ;***Desired length of the message
 ;**The output is pointer to new string of characters that is extended by proper amount of characters (allocated with HeapAlloc and GetProcessHeap - deallocate with HeapFree).
 ;***Document that describes the HeapFree, HeapAlloc and GetProcessHeap is in your laptop.
-;**RESULT PASSED THROUGH STACK!
 ;*****
 ;*Note that the passed characters are in UTF-16
 ;*****************************************************************
 LengthenString PROC sourceMsg:PTR DWORD, sourceLength:DWORD, desiredLength:DWORD
-
-	LOCAL returnPtr : DWORD								;Placeholder for return address.				;;;;;;Lokalne sa wrzucane na stos. Popnij je na koncu procedury. (Pop adresu jest niepotrzebny na razie tu¿ poni¿ej, dopiero na koñcu)
+				;;;;;;Lokalne sa wrzucane na stos. Popnij je na koncu procedury. (Pop adresu jest niepotrzebny na razie tu¿ poni¿ej, dopiero na koñcu)
 	LOCAL resultMsg : DWORD								;Variable for storing the return address.
-	
-	POP returnPtr										;Store the return address
+	LOCAL wasG : DWORD									;Boolean that is used to check if a G letter was the last added letter. Used when the desired amount of characters and the current amount do not match.
 
 
-	INVOKE GetProcessHeap								;Retrieve the address of the heap for the process. Address returned in EAX.
 	MOV EBX, desiredLength								;Allocation of memory is made in bytes. We need words...
 	ROL EBX, 1											;... so multiply the desired length by 2 (or rotate to the left by one bit, like in this case).
+														;Since an array is to be declared, the last character has to be \0. So, in case the needed amount of BYTEs is dividable by DWORD capacity - add one more BYTE.
+	PUSH EBX											;Put the length to check on the stack...
+	CALL IsDividableByDWORD								;...and check if the amount of required bytes is dividable by DWORD. Result on stack.
+
+	CMP EAX, 0h											;Is the amount of bytes to declare dividable by DWORD?...
+	JNZ NoNeedToAdd										;...If yes - add two bytes.
+	ADD EBX, 2h											
+						
+
+NoNeedToAdd:											;...If not, simply jump here and proceed.
+	INVOKE GetProcessHeap								;Retrieve the address of the heap for the process. Address returned in EAX.
 	INVOKE HeapAlloc, EAX, heapAllocFlags, EBX   ;Tries to allocate array on the process' heap of desired length.
 	MOV resultMsg, EAX									;If allocation was successful - the pointer will be in EAX register. Store it.
 														;Declaration of new array of WORDs (chars in UTF-16), length of desiredLength, no need to initialize
@@ -104,7 +134,10 @@ LengthenString PROC sourceMsg:PTR DWORD, sourceLength:DWORD, desiredLength:DWORD
 	CLD													;Clear direction flag so the iterators are increasing
 	REP MOVSW											;Copy from source to destination ECX words (WORD by WORD).
 												;Now, fill the rest of the resultMsg with X and G characters (round robin)
-	wasG BYTE 1h										;Set a boolean to true - We start with X letter.
+	MOV ECX, desiredLength								;Put desired length in the ECX - this will be used to find out how many more letters need to be added
+	SUB ECX, sourceLength								;Subtract the length of the source - result is the amount of letters that still have to be added
+
+	MOV wasG, 1h										;We start with X letter.
 	MOV AX, XCharacter									;Prepare fast read for the X character
 	MOV BX, GCharacter									;Prepare fast read for the G character 
 												;ECX stores the rest of WORDs that need to be copied. When it reaches 0 - the resultMsg is full.
@@ -115,12 +148,12 @@ KeepAddingCharacters:							;Beginning of the loop that adds the remaining chara
 		CMP wasG, 0h										;check if wasG is false
 		JZ wasntG											;if it was - jump to wasntG to put an X in there
 
-		MOV WORD PTR [EDI], BX								;Set the character in the array to X.
+		MOV WORD PTR [EDI], AX								;Set the character in the array to X.
 		MOV wasG, 0h										;A 'X' was just set - set the flag to FALSE.
 
 		JMP decrementIter									;The char was set, now it is needed to decrement the counter in ECX.
 	wasntG:													;Last put character was X.
-		MOV WORD PTR [EDI], AX								;Put a letter G in the array.
+		MOV WORD PTR [EDI], BX								;Put a letter G in the array.
 		MOV wasG, 1h										;A 'G' was just set in the array. Set the flag to TRUE.
 
 decrementIter:									;Another 16 bit char was set in the array...
@@ -129,8 +162,11 @@ decrementIter:									;Another 16 bit char was set in the array...
 	JMP KeepAddingCharacters							;Begin next iteration of the loop.
 
 EndProcedure:									;End of lengthening the string. Time to return its address through the stack. And restore the return address, too.
-	PUSH resultMsg
-	PUSH returnPtr
+	POP EBX												;Get rid of the local values on the stack
+	POP EBX												;^^^
+
+	MOV EAX, resultMsg									;Move the pointer to result string to EAX
+	
 	RET
 LengthenString ENDP
 ;********************************
