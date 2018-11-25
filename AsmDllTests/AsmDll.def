@@ -4,4 +4,3 @@ EXPORTS
 		;For Debug Only:
 		CalcNeededLength
 		LengthenString
-		foo

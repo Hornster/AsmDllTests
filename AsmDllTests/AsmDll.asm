@@ -25,17 +25,6 @@ MOV EAX, TRUE
 RET
 DllEntry ENDP
 ;*****************************************************************
-;*Testing procedure - for checking if library has been loaded correctly.
-;******************************************************************
-foo PROC
-	MOV EAX, ExampleConst
-	INC EAX
-	POP EDX
-	PUSH EDX
-	RET
-foo ENDP
-
-;*****************************************************************
 ;*Checks if passed amount of bytes is dividable by DWORD (by 4). If yes - returns 0h, otherwise returns non-zero value.
 ;*Uses EAX, EBX, EDX
 ;*Preserves EBX, EDX
@@ -105,7 +94,7 @@ CalcNeededLength ENDP
 ;*Note that the passed characters are in UTF-16
 ;*****************************************************************
 LengthenString PROC sourceMsg:PTR DWORD, sourceLength:DWORD, desiredLength:DWORD
-				;;;;;;Lokalne sa wrzucane na stos. Popnij je na koncu procedury. (Pop adresu jest niepotrzebny na razie tu¿ poni¿ej, dopiero na koñcu)
+				;;;;;;LOCALs are thrown on the stack
 	LOCAL resultMsg : DWORD								;Variable for storing the return address.
 	LOCAL wasG : DWORD									;Boolean that is used to check if a G letter was the last added letter. Used when the desired amount of characters and the current amount do not match.
 
@@ -171,6 +160,218 @@ EndProcedure:									;End of lengthening the string. Time to return its address
 LengthenString ENDP
 ;********************************
 
+
+;*****************************************************************
+;*Sorts the two arrays. First argument (from right) is the source array which values will be sorted (from smaller to bigger).
+;*Second argument (from right) is an array which will mimic all changes in the first one (in other words, changes will be sync with first one).
+;*Passed key will become sorted, too (rising).
+;**Input:
+;***Address of the process' heap.
+;***Length of the array to sort.
+;***Pointer to array of WORDs that will be sorted.
+;***Pointer to array of DWORDs that will be sorted accordingly to the first array (of WORDs).
+;**Nothing is returned.
+;*Used registers: EAX, EBX, ECX, EDX, ESI, EDI
+;*Preserved registers: EAX, EBX, ECX, EDX, ESI, EDI
+;*****************************************************************
+SortFirstSecondMimics PROC  sortArrayPtr:DWORD, mimickingArrayPtr:DWORD, sortArrayLength:DWORD
+	LOCAL smallest:DWORD					;Smallest index in current iteration of OuterLoop
+	LOCAL smallestChar:WORD					;Currently smallest character
+	LOCAL tempVal:WORD						;Variable used for character changing
+	LOCAL tempPtr:DWORD						;Variable used for pointer exchanging
+
+	PUSH EAX								;Store values in registers. At the end of the procedure, these will be restored.
+	PUSH EBX								;^^
+	PUSH ECX								;^^
+	PUSH EDX								;^^
+	PUSH ESI								;^^
+	PUSH EDI								;^^
+
+	MOV ESI, sortArrayPtr					;Prepare counters - sortArrayPtr
+	MOV EDI, mimickingArrayPtr				;mimickingArrayPtr - the one that stores pointers to message arrays
+										;Pointers that store current position in the table (by keyLength, that is, not dependent from size of single item)
+	MOV ECX, 0h								;Pointer used to iterate in OuterLoop
+	MOV EBX, 0h								;Counter for iteration in InnerLoop
+	MOV EAX, sortArrayLength				;store the sortArrayLength for faster access
+	SUB EAX, 1h								;Decrease the length by 1 - otherwise, the outer loop could stop too late, making the inner one reach too far (by one position behind the array).
+											;Same operation happens right before comparison of the OuterLoop counter (ECX). For the InnerLoop, the EAX value is increased by 1.
+
+OuterLoop:									;Iterates through the sortArray
+	MOV smallest, ECX						;Put new index in the smallest index variable.
+	MOV EBX, ECX							;With each new iteration the amount of items to check is decreased by 1. Sorted items are saved in the left part of the array.
+	ADD EBX, 1h								;There's no need in comparing the same item with itself so skip to next one instantly.
+	MOV DX, WORD PTR [ESI+ECX*2]			;Set the first unsorted character as smallest.
+	MOV smallestChar, DX					;And save it in temporary location.
+	ADD EAX, 1h								;Lastly, increase the range for the InnerLoop by 1 so it can reach the last element in the array. At the end of the OuterLoop, this shall be
+											;decreased by 1 before comparison with ECX (OuterLoop counter).
+
+	InnerLoop:
+		MOV DX, WORD PTR [ESI+EBX*2]		;Put the value pointed at by ESI+EBX*2 in DX since cannot perform memory-memory comparsion. 
+		CMP DX, smallestChar	;WORD PTR [ESI+ECX*2]		;Compare currently iterated values - ESI+EBX is currently seen, ESI+ECX is currently checked against. Times 2 since both are of WORD type.
+		JGE Continue						;If the ESI+EBX is greater or equal ESI+ECX - ignore the item and continue.
+		MOV smallest, EBX					;At the end, store the smallest index value.
+		MOV smallestChar, DX				;Store the new smallest character, too.
+
+	Continue:							;Continue iteration
+		ADD EBX, 1h							;Increase the iterator
+		CMP EBX, EAX						;Check if the counter for InnerLoop reached the end of the array.
+		JNZ InnerLoop						;If the counter did not reach the end - jump back to the InnerLoop.
+	EndInnerLoop:
+
+	PUSH EAX								;Temporarily store the value of the EAX on the stack - one free register is needed
+											;since memory-memory passes ar a big no-no.
+	ROL ECX, 1								;multiply ECX by 2 (switching of 16bit chars is about to happen)
+	ROL smallest, 1							;Multiply smallest by 2 (switching of 16bit chars is about to happen)
+	MOV EBX, ESI							;Prepare the first base register value for switching values in sortArrayPtr
+	ADD EBX, ECX							;Add ECX value to the base register.
+	MOV EDX, ESI							;Prepare the second base register value for switching values in sortArrayPtr
+	ADD EDX, smallest						;Add value in smallest to the base register.		;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;Make it SSE instructions;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+	MOV AX, [EBX]							;Switch two characters (16 bit) in the sortArray array - Pass the sortArrayPtr[ESI+ECX] to AX
+	MOV tempVal, AX							;and store it in tempVal
+	MOV AX, [EDX]							;Then, Pass the  sortArrayPtr[ESI+smallest] to AX...
+	MOV [EBX], AX							;...and from there to sortArrayPtr[ESI+ECX]
+	MOV AX, tempVal							;Finally, retrieve the value stored in tempVal...
+	MOV [EDX], AX							;...and save it at sortArrayPtr[ESI+smallest]
+
+	ROL ECX, 1								;multiply ECX by 2 (switching of 32bit pointers is about to happen)
+	ROL smallest, 1							;Multiply smallest by 2 (switching of 32bit pointers is about to happen)
+	MOV EBX, EDI							;Prepare the first base register value for switching values in sortArrayPtr
+	ADD EBX, ECX							;Add ECX value to the base register.
+	MOV EDX, EDI							;Prepare the second base register value for switching values in sortArrayPtr
+	ADD EDX, smallest						;Add value in smallest to the base register.		;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;Make it SSE instructions;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+										;Switch pointers in the mimicking array
+	MOV EAX, [EBX]							;Pass the value of mimickingArrayPtr[EDI + ECX] to EAX...
+	MOV tempPtr, EAX						;...and store it in tempPtr DWORD
+	MOV EAX, [EDX]							;Pass the value of mimickingArrayPtr[EDI + smallest] to EAX...
+	MOV [EBX], EAX							;...and overwrite the value in mimickingArrayPtr[EDI + ECX]
+	MOV EAX, tempPtr						;At the end, get the value stored in tempPtr...
+	MOV [EDX], EAX							;...and overwrite the mimickingArrayPtr[EDI + smallest]. The values are switched now.
+
+	POP EAX									;Return the key length value to the EAX
+
+	ROR ECX, 2								;Divide ECX by 4 (bring it back to 1x counter). No need to reset smallest since it will have new value assigned before any other type of use.
+	ADD ECX, 1h								;Increase the iterator
+	SUB EAX, 1h								;And decrease temporarily the length (as 'n') of the array - the outer loop needs to stop when its counter (ECX) reaches n-1. If it reaches one step further - the last character
+											;will be compared with character after the last one, which does not belong to the array.
+	CMP ECX, EAX							;Check if the counter for OuterLoop reached the end of the array.
+	JNZ OuterLoop							;If the counter did not reach the end - jump back to the OuterLoop.
+EndOuterLoop:
+
+	POP EDI									;Restore the used registers value.
+	POP ESI
+	POP EDX
+	POP ECX
+	POP EBX
+	POP EAX
+
+	RET
+SortFirstSecondMimics ENDP
+;*****************************************************************
+
+;*****************************************************************
+;*Performs the encryption process by sorting the key (and data assigned to its parts) and reading the result.
+;**Input:
+;***encoded in ADFGVX string with message 
+;***string with key used in encryption
+;***Length of the message to encrypt
+;***Length of the key
+;**The output is encrypted string, in msgStr pointer.
+;*Uses registers: EAX, EBX, ECX, EDX, EDI, ESI
+;*Preserves registers: EAX, EBX, ECX, EDX, EDI, ESI
+;*****
+;*Note that the passed characters are in UTF-16
+;*****************************************************************
+PerformEncryption PROC keyLength:DWORD, msgLength:DWORD, keyStr:DWORD, msgStr:DWORD
+	LOCAL encryptedMsg, keyStrPtr:DWORD, processHeap:DWORD		;Local variables that will be used to store addresses to finally encrypted message and pointer array (used to read encrypted message).\
+
+	PUSH EAX									;Preserve the values of the used registers.
+	PUSH EBX
+	PUSH ECX
+	PUSH EDX
+	PUSH ESI
+	PUSH EDI
+
+	MOV EBX, keyLength							;Put the length of the string into EBX register. Needed for declaration of pointers array.
+	ROL EBX, 2									;Multiply by 4 amount of BYTEs needed for the pointers array (stores DWORDs).
+	INVOKE GetProcessHeap						;Retrieve the address of the heap for the process. Address returned in EAX.
+	MOV processHeap, EAX
+	INVOKE HeapAlloc, EAX, heapAllocFlags, EBX   ;Tries to allocate array on the process' heap of desired length.
+	MOV keyStrPtr, EAX							;Save the address of the pointer array.
+
+				;Set the pointers in keyStrPtr
+	MOV ECX, 0h									;Prepare a counter to iterate through the pointer array. We start with the 0 index.
+	MOV EBX, 2h									;Prepare the length in bytes of a single characer (faster operations)
+	MOV EDX, 4h									;Prepare the length in bytes of a DWORD (faster operations)
+	MOV ESI, msgStr								;Source array address in ESI
+	MOV EDI, EAX								;Destination array in EDI
+
+SetPointersLoop:							;Loop that prepares pointers to first elements of the msgStr by filling the keyStrPtr array with pointers to the source (msgStr).
+	MOV [EDI], ESI							;Pass the address of current element from the source to array (ESI) field under address in EDI
+	ADD ESI, EBX							;Increase pointer of source by 2 BYTEs
+	ADD EDI, EDX							;Increase pointer to destination by 4 BYTEs
+	ADD ECX, 1h								;Increase the step of the loop. Limit is the size of the key.
+	CMP ECX, keyLength						;If the next iteration number equals the keyLength...
+	JZ StartSorting							;...begin sorting the key.
+	JMP SetPointersLoop						;...else perform next iteration and assign next pointer.
+
+StartSorting:
+	PUSH keyLength							;Push the length of both arrays
+	PUSH keyStrPtr							;Push the array of pointers to characters given positions in keyStrPtr
+	PUSH keyStr								;Push the key characters on the stack
+	CALL SortFirstSecondMimics				;Call the sorting procedure. The keyStr shall be sroted from now on (increasingly) and the keyStrPtr shall resemble keyStr.
+	
+	MOV EAX, msgLength						;Prepare the amount of bytes for the encryptedMsg allocation (will store WORD length characters)...
+	ROL EAX, 1								;...and multiply it by 2 to make all the WORDs fit in there.
+
+	INVOKE HeapAlloc, processHeap, heapAllocFlags, EAX	;Alllocate array that will temporarily store read encrypted message.
+	MOV encryptedMsg, EAX					;Store the address of the newly created array.
+
+	MOV ESI, keyStrPtr						;Prepare the source (pointers to - keyStrPtr) for iteration
+	MOV EDI, EAX							;Prepare the pointer to result array.
+
+	MOV ECX, 0h								;Set the counter to 0
+ReadingLoop:								;Outer loop - for iteration through the source message
+	MOV EBX, 0h								;Reset the inner counter to 0
+	
+	ReadingLoopInner:						;Inner loop - iterates through the keyStrPtr
+		MOV EDX, [ESI + EBX*4]				;Take address to a WORD character from source array using pointers array pointer...
+		MOV DX, WORD PTR [EDX]						;...and dereference the pointer once again in order to retrieve the WORD character.
+		MOV WORD PTR [EDI+ECX*2], DX		;...and put it in next WORD type spot in the result array.
+		MOV EDX, DWORD PTR keyLength					;Prepare for pointer move - add base of the movement...
+		ROL EDX, 1h							;...then multiply the amount of BYTEs to move by 2 since the characters are WORDs...
+		ADD EDX, [ESI + EBX*4]				;...and add the current address of the pointer.
+		MOV [ESI + EBX*4], EDX				;Finally, save the new value of the pointer (positioned right after all of the remaining pointers).
+
+		ADD ECX, 1h							;Increment the outer loop counter (msgStr)
+		ADD EBX, 1h							;Increment the inner loop counter (keyStrPtr)
+		CMP EBX, keyLength					;Compare the inner loop counter with length of the key...
+		JNZ ReadingLoopInner				;...if the values are not equal - keep iterating, else leave the loop.
+
+	CMP ECX, msgLength						;Compare the outer loop counter with the length of the message...
+	JNZ ReadingLoop							;...if the values are not equal - perform another iteration. Else exit loop.
+	
+	MOV ESI, EAX							;Move the encryptedMsg address to source reqister
+	MOV EDI, msgStr							;Move the message source to the result register
+	MOV ECX, msgLength						;Prepare the counter
+	CLD										;We iterate backwards
+	REP MOVSW								;Copy all WORDs
+	
+	INVOKE HeapFree, processHeap, 0h, keyStrPtr		;Clear allocated temporary memory for array of pointers that created reading window.
+	INVOKE HeapFree, processHeap, 0h, encryptedMsg	;Clear the allocated temporary memory for ready message reading.
+
+	
+	POP EDI									;Restore values of used registers.
+	POP ESI
+	POP EDX
+	POP ECX
+	POP EBX
+	POP EAX
+
+	RET
+PerformEncryption ENDP
+;*****************************************************************
+
 ;*****************************************************************
 ;*Entry encryption procedure. Called from the outside.
 ;**Input:
@@ -184,8 +385,8 @@ LengthenString ENDP
 ;*****************************************************************
 EncryptMsg PROC	keyLength:DWORD, msgLength:DWORD, keyStr:DWORD, msgStr:DWORD					;Params loading from right to left (stdcall convention). keyStr and msgStr are 
 																								;	pointers to chars array (16 bit chars, UTF-16 notation, little endian). 
-	desiredLength DWORD ?							;The length of encrypted message (with added characters, each char is a WORD)
-	lengthenedMsg DWORD ?							;Pointer to the lengthened message (with eventually added X and G characters).
+	LOCAL desiredLength: DWORD						;The length of encrypted message (with added characters, each char is a WORD)
+	LOCAL lengthenedMsg: DWORD						;Pointer to the lengthened message (with eventually added X and G characters).
 												;Prepare the lengths of the key and the message to be passed to the procedure
 	PUSH keyLength								;Put the first argument (keyLength) on the stack
 	PUSH msgLength								;Put the second argument (msgLength) on the stack
@@ -196,13 +397,18 @@ EncryptMsg PROC	keyLength:DWORD, msgLength:DWORD, keyStr:DWORD, msgStr:DWORD				
 	PUSH msgLength
 	PUSH msgStr
 	CALL LengthenString							;Retrieve the address of lengthened 16 bit array of chars through the stack...
-	POP lengthenedMsg							;...and assign it to lengthenedMsg DWORD.
-
-
-
-	EncryptedMsg DW ?						;Variable pointer that will be pointing to the result message.
+		;POP lengthenedMsg							;...and assign it to lengthenedMsg DWORD.
+	MOV lengthenedMsg, EAX						;...and assign it to lengthenedMsg DWORD.
 	
-	RET																							;Return to the caller.
+	PUSH lengthenedMsg							;Put the message to encrypt, ...
+	PUSH keyStr									;...the pointer to the string with the key, ...
+	PUSH desiredLength							;...the length of the message to encrypt...	
+	PUSH keyLength								;...and the length of the key on the stack.
+	CALL PerformEncryption						;Then begin the encryption process.
+
+	MOV EAX, lengthenedMsg						;Prepare the result - encrypted message - for return
+
+	RET											;Return to the caller.
 
 EncryptMsg ENDP
 ;********************************
@@ -213,3 +419,5 @@ END
 ;Notki:
 ;-Zapis - little endian na wiêkszoœci procesorów x86 - st¹d zapis np. litery '¿' (dw 017Ch) w UTF16:
 ;		  db 7Ch, 01h
+;TODO
+;Z jednej z procedur zwracana jest dynamicznie zaalokowana pamiêæ. Trzeba bêdzie dopisaæ procedurê zwalniaj¹c¹ pamiêæ t¹ (wywo³ana z g³ównego programu, poibiera adres sterty procesu i dostaje jako arg. adres tablicy).

@@ -1,8 +1,7 @@
 #pragma once
 
-extern "C" __declspec(dllexport) int __stdcall callFoo();
-extern "C" int __stdcall foo();
-
+extern "C" __declspec(dllexport) char16_t* __stdcall CallEncryptMessage(int keyLength, int msgLength, char16_t* keyStr, char16_t* msgStr);
+extern "C" char16_t* __stdcall EncryptMsg(int keyLength, int msgLength, char16_t* keyStr, char16_t* msgStr);
 ////////////
 ///DEBUGS///
 ////////////
