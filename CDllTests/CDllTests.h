@@ -2,6 +2,8 @@
 
 extern "C" __declspec(dllexport) char16_t* __stdcall CallEncryptMessage(int keyLength, int msgLength, char16_t* keyStr, char16_t* msgStr);
 extern "C" char16_t* __stdcall EncryptMsg(int keyLength, int msgLength, char16_t* keyStr, char16_t* msgStr);
+extern "C" __declspec(dllexport) void __stdcall CallFreeUtf16TextChunk(char16_t* characterArray);
+extern "C" void __stdcall FreeUtf16TextChunk(char16_t* characterArray);
 ////////////
 ///DEBUGS///
 ////////////

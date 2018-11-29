@@ -1,11 +1,11 @@
 .686										;use .686 instruction set in the assembly
-.XMM										;SSE extension will be used
 .MODEL FLAT, STDCALL						;set flat memory model, calling convention shall be standard
+.XMM										;SSE extension will be used
 
 OPTION CASEMAP:NONE							;case matters
-INCLUDE C:/masm32/include/windows.inc		;necessary library
-INCLUDE \masm32\include\kernel32.inc
-INCLUDELIB \masm32\lib\kernel32.lib
+INCLUDE D:/masm32/include/windows.inc		;necessary library
+INCLUDE  D:\masm32\include\kernel32.inc
+INCLUDELIB  D:\masm32\lib\kernel32.lib
 
 .CONST										;read only segment - constant
 ExampleConst DWORD 145d						;edxamplary constant used in the procedure foo. value 145, decimal
@@ -222,10 +222,25 @@ OuterLoop:									;Iterates through the sortArray
 											;since memory-memory passes ar a big no-no.
 	ROL ECX, 1								;multiply ECX by 2 (switching of 16bit chars is about to happen)
 	ROL smallest, 1							;Multiply smallest by 2 (switching of 16bit chars is about to happen)
-	MOV EBX, ESI							;Prepare the first base register value for switching values in sortArrayPtr
-	ADD EBX, ECX							;Add ECX value to the base register.
-	MOV EDX, ESI							;Prepare the second base register value for switching values in sortArrayPtr
-	ADD EDX, smallest						;Add value in smallest to the base register.		;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;Make it SSE instructions;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+										;Prepare the first register - pointer values
+	PINSRD XMM0, ESI, 0						;Load the ESI (pointer to sortArrayPtr) to bottom 64bit half, two times
+	PINSRD XMM0, ESI, 1						;^^
+	PINSRD XMM0, EDI, 2						;Load the EDI (pointer to mimickingArrayPtr) to upper 64bit half, two times
+	PINSRD XMM0, EDI, 3						;^^
+									;Prepare second register - values to add
+	PINSRD XMM1, ECX, 0						;ECX value to add to the base register (sortArrayPtr).
+	PINSRD XMM1, smallest, 1					;Value in smallest to add to the base register (sortArrayPtr).
+										;Switch from WORDs to DWORDs
+	ROL ECX, 1								;multiply ECX by 2 (switching of 32bit pointers is about to happen)
+	ROL smallest, 1							;Multiply smallest by 2 (switching of 32bit pointers is about to happen)
+										
+	PINSRD XMM1, ECX, 2						;ECX value to add to the base register (mimickingArrayPointer).
+	PINSRD XMM1, smallest, 3					;Value in smallest to add to the base register (mimickingArrayPointer).
+
+	PADDD XMM0, XMM1						;Perform addition of four pointer (DWORD) values. Results stored in XMM0.
+
+	PEXTRD EBX, XMM0, 0						;Extract the ESI+ECX result and save it in EBX (pointer to sortArray).
+	PEXTRD EDX, XMM0, 1						;Extract the ESI+smallest result and save it in EDX (pointer to SortArray).
 
 	MOV AX, [EBX]							;Switch two characters (16 bit) in the sortArray array - Pass the sortArrayPtr[ESI+ECX] to AX
 	MOV tempVal, AX							;and store it in tempVal
@@ -234,12 +249,8 @@ OuterLoop:									;Iterates through the sortArray
 	MOV AX, tempVal							;Finally, retrieve the value stored in tempVal...
 	MOV [EDX], AX							;...and save it at sortArrayPtr[ESI+smallest]
 
-	ROL ECX, 1								;multiply ECX by 2 (switching of 32bit pointers is about to happen)
-	ROL smallest, 1							;Multiply smallest by 2 (switching of 32bit pointers is about to happen)
-	MOV EBX, EDI							;Prepare the first base register value for switching values in sortArrayPtr
-	ADD EBX, ECX							;Add ECX value to the base register.
-	MOV EDX, EDI							;Prepare the second base register value for switching values in sortArrayPtr
-	ADD EDX, smallest						;Add value in smallest to the base register.		;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;Make it SSE instructions;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+	PEXTRD EBX, XMM0, 2						;Extract the EDI+ECX result and save it in EBX (pointer to mimickingArray).
+	PEXTRD EDX, XMM0, 3						;Extract the EDI+smallest result and save it in EDX (pointer to mimickingArray).
 										;Switch pointers in the mimicking array
 	MOV EAX, [EBX]							;Pass the value of mimickingArrayPtr[EDI + ECX] to EAX...
 	MOV tempPtr, EAX						;...and store it in tempPtr DWORD
@@ -412,6 +423,31 @@ EncryptMsg PROC	keyLength:DWORD, msgLength:DWORD, keyStr:DWORD, msgStr:DWORD				
 
 EncryptMsg ENDP
 ;********************************
+
+;*****************************************************************
+;*Allows managed programs to release unmanaged memory that has been declared in this library.
+;**Input:
+;***Pointer to memory chunk, allocated via HeapAlloc()
+;*No output.
+;*Uses EAX register.
+;*Preserves EAX register.
+;*****************************************************************
+FreeUtf16TextChunk PROC memChunkPtr:DWORD
+	PUSH EAX									;Preserve previous value of EAX.
+
+	INVOKE GetProcessHeap						;Retrieve the heap of the process. Address stored in EAX
+	INVOKE HeapFree, EAX, 0h, memChunkPtr		;Free memory pointed to by memChunkPtr
+
+	MOV EAX, 0h
+	MOV memChunkPtr, EAX						;Set the pointer to 0h (nullptr)
+
+	POP EAX										;Recover the value of the EAX register.
+
+	RET											;Returnto caller
+FreeUtf16TextChunk ENDP
+;*****************************************************************
+
+
 END DllEntry
 
 END
@@ -420,4 +456,42 @@ END
 ;-Zapis - little endian na wiêkszoœci procesorów x86 - st¹d zapis np. litery '¿' (dw 017Ch) w UTF16:
 ;		  db 7Ch, 01h
 ;TODO
-;Z jednej z procedur zwracana jest dynamicznie zaalokowana pamiêæ. Trzeba bêdzie dopisaæ procedurê zwalniaj¹c¹ pamiêæ t¹ (wywo³ana z g³ównego programu, poibiera adres sterty procesu i dostaje jako arg. adres tablicy).
+;Z jednej z procedur zwracana jest dynamicznie zaalokowana pamiêæ. Trzeba bêdzie dopisaæ procedurê zwalniaj¹c¹ pamiêæ t¹ (wywo³ana z g³ównego programu, 
+;poibiera adres sterty procesu i dostaje jako arg. adres tablicy).
+;DONE
+
+
+
+
+
+
+;;;;;;;;;;
+;BACKUP
+;;;;;;;;;;
+;ROL ECX, 1								;multiply ECX by 2 (switching of 16bit chars is about to happen)
+;	ROL smallest, 1							;Multiply smallest by 2 (switching of 16bit chars is about to happen)
+;	MOV EBX, ESI							;Prepare the first base register value for switching values in sortArrayPtr
+;	ADD EBX, ECX							;Add ECX value to the base register.
+;	MOV EDX, ESI							;Prepare the second base register value for switching values in sortArrayPtr
+;	ADD EDX, smallest						;Add value in smallest to the base register.		;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;Make it SSE instructions;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;	MOV AX, [EBX]							;Switch two characters (16 bit) in the sortArray array - Pass the sortArrayPtr[ESI+ECX] to AX
+;	MOV tempVal, AX							;and store it in tempVal
+;	MOV AX, [EDX]							;Then, Pass the  sortArrayPtr[ESI+smallest] to AX...
+;	MOV [EBX], AX							;...and from there to sortArrayPtr[ESI+ECX]
+;	MOV AX, tempVal							;Finally, retrieve the value stored in tempVal...
+;	MOV [EDX], AX							;...and save it at sortArrayPtr[ESI+smallest]
+
+;	ROL ECX, 1								;multiply ECX by 2 (switching of 32bit pointers is about to happen)
+;	ROL smallest, 1							;Multiply smallest by 2 (switching of 32bit pointers is about to happen)
+;	MOV EBX, EDI							;Prepare the first base register value for switching values in sortArrayPtr
+;	ADD EBX, ECX							;Add ECX value to the base register.
+;	MOV EDX, EDI							;Prepare the second base register value for switching values in sortArrayPtr
+;	ADD EDX, smallest						;Add value in smallest to the base register.		;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;Make it SSE instructions;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+										;Switch pointers in the mimicking array
+;	MOV EAX, [EBX]							;Pass the value of mimickingArrayPtr[EDI + ECX] to EAX...
+;	MOV tempPtr, EAX						;...and store it in tempPtr DWORD
+;	MOV EAX, [EDX]							;Pass the value of mimickingArrayPtr[EDI + smallest] to EAX...
+;	MOV [EBX], EAX							;...and overwrite the value in mimickingArrayPtr[EDI + ECX]
+;	MOV EAX, tempPtr						;At the end, get the value stored in tempPtr...
+;	MOV [EDX], EAX							;...and overwrite the mimickingArrayPtr[EDI + smallest]. The values are switched now.

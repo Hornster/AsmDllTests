@@ -1,6 +1,7 @@
 LIBRARY AsmDllTests
 EXPORTS 
 		EncryptMsg
+		FreeUtf16TextChunk
 		;For Debug Only:
 		CalcNeededLength
 		LengthenString
